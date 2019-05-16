@@ -135,8 +135,8 @@ class Parallel(tfb.Bijector):
 
         forward_min_event_ndims = max(
             bijector.forward_min_event_ndims for bijector in bijectors)
-        inverse_min_event_ndims = min(
-            bijector.forward_min_event_ndims for bijector in bijectors)
+        inverse_min_event_ndims = max(
+            bijector.inverse_min_event_ndims for bijector in bijectors)
 
         super(Parallel, self).__init__(
             graph_parents=list(itertools.chain.from_iterable(
@@ -226,9 +226,11 @@ class Parallel(tfb.Bijector):
                 tf.concat(split_x[i_start:i_end], axis=axis),
                 event_ndims=event_ndims,
                 **kwargs.get(bijector.name, {}))
-            fldjs.append(fldj)
+            # TODO(farrell236): Check ildj correctness
+            fldjs.append(tf.reduce_sum(fldj))
 
-        full_fldj = tf.concat(fldjs, axis=axis)
+        # See comment for ildj below
+        full_fldj = tf.reduce_sum(fldjs)
 
         return full_fldj
 
@@ -258,8 +260,14 @@ class Parallel(tfb.Bijector):
                 tf.concat(split_y[i_start:i_end], axis=axis),
                 event_ndims=event_ndims,
                 **kwargs.get(bijector.name, {}))
-            ildjs.append(ildj)
+            # TODO(farrell236): Check ildj correctness
+            # Identity Bijector returns shape=()
+            # GlowStep Bijector returns shape=(?,)
+            ildjs.append(tf.reduce_sum(ildj))
 
-        full_ildj = tf.concat(ildjs, axis=axis)
+        # full_ildj should be the summation of all ildj from split bijectors
+        # log|det(J(parallel))| = sum_i^N log|det(J(bijector_i))|
+        # See: https://github.com/hartikainen/glow-flow/issues/1
+        full_ildj = tf.reduce_sum(ildjs)
 
         return full_ildj

@@ -12,10 +12,11 @@ from datetime import datetime
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-from .datasets import get_input_fns
+from scripts.datasets import get_input_fns
 from glow.bijectors import GlowFlow
 
 tfd = tfp.distributions
+tfb = tfp.bijectors
 
 
 AVAILABLE_DATASETS = ('mnist', )
@@ -67,13 +68,23 @@ def parse_args():
 
     parser.add_argument("--batch_size",
                         type=int,
-                        default=64,
+                        default=16,
                         help="Batch size.")
 
     parser.add_argument("--max_steps",
                         type=int,
                         default=int(1e6),
                         help="Total number of training steps to run.")
+
+    parser.add_argument("--learning_rate",
+                        type=float,
+                        default=float(1e-4),
+                        help="Initial training learning rate.")
+
+    parser.add_argument("--clip_gradient",
+                        type=float,
+                        default=float(100.),
+                        help="Clip gradient factor.")
 
     parser.add_argument(
         "--activation",
@@ -82,9 +93,9 @@ def parse_args():
         help="Activation function for all hidden layers.")
 
     parser.add_argument("--seed", type=int, default=0, help="Random seed.")
-    parser.add_argument("--num_levels", type=int, default=3,
+    parser.add_argument("--num_levels", type=int, default=2,
                         help="Number of Glow levels in the flow.")
-    parser.add_argument("--level_depth", type=int, default=3,
+    parser.add_argument("--level_depth", type=int, default=12,
                         help="Number of flow steps in each Glow level.")
 
     args = parser.parse_args()
@@ -94,8 +105,8 @@ def parse_args():
 
 def bits_per_dim(negative_log_likelihood, image_shape):
     image_size = tf.reduce_prod(image_shape)
-    return ((negative_log_likelihood + tf.log(256.0) * image_size)
-            / (image_size * tf.log(2.0)))
+    return ((negative_log_likelihood + tf.log(256.0) * tf.cast(image_size, tf.float32))
+            / (tf.cast(image_size, tf.float32) * tf.log(2.0)))
 
 
 def pack_images(images, rows, cols):
@@ -129,9 +140,7 @@ def model_fn(features, labels, mode, params, config):
         Returns:
         EstimatorSpec: A tf.estimator.EstimatorSpec instance.
     """
-    base_distribution = tfd.MultivariateNormalDiag(
-        loc=tf.zeros(features.shape[-3:]),
-        scale_diag=tf.ones(features.shape[-3:]))
+    base_distribution = tfd.Normal(loc=0., scale=1.)
 
     glow_flow = GlowFlow(
         num_levels=params['num_levels'],
@@ -140,18 +149,20 @@ def model_fn(features, labels, mode, params, config):
     transformed_glow_flow = tfd.TransformedDistribution(
         distribution=base_distribution,
         bijector=glow_flow,
-        name="transformed_glow_flow")
+        name="transformed_glow_flow",
+        event_shape=features.shape.as_list()[-3:])
 
     image_tile_summary("input", tf.to_float(features), rows=1, cols=16)
 
     z = glow_flow.inverse(features)
     prior_log_probs = base_distribution.log_prob(z)
     prior_log_likelihood = -tf.reduce_mean(prior_log_probs)
-    log_det_jacobians = glow_flow.inverse_log_det_jacobians(features)
-    log_probs = log_det_jacobians + log_det_jacobians
+    # log_det_jacobians = glow_flow.inverse_log_det_jacobians(features)
+    # log_probs = log_det_jacobians + log_det_jacobians
+    log_probs = transformed_glow_flow.log_prob(features)
 
     # Sanity check, remove when tested
-    assert tf.equal(log_probs, transformed_glow_flow.log_prob(features))
+    # assert tf.equal(log_probs, transformed_glow_flow.log_prob(features))
 
     negative_log_likelihood = -tf.reduce_mean(log_probs)
     bpd = bits_per_dim(negative_log_likelihood, features.shape[-3:])
@@ -163,28 +174,28 @@ def model_fn(features, labels, mode, params, config):
         tf.reshape(negative_log_likelihood, []))
     tf.summary.scalar("bit_per_dim", tf.reshape(bpd, []))
 
-    #  TODO: prior likelihood and log det jacobians?
+    # TODO: prior likelihood and log det jacobians?
     # tf.summary.scalar("prior_ll", tf.reshape(tf.reduce_mean(prior_ll), []))
 
-    z_l2 = tf.norm(z, axis=1)
-    z_l2_mean, z_l2_var = tf.nn.moments(z_l2)
-    log_det_jacobians_mean, log_det_jacobians_var = tf.nn.moments(
-        log_det_jacobians)
-    prior_log_likelihood_mean, prior_log_likelihood_var = tf.nn.moments(
-        prior_log_likelihood)
+    # z_l2 = tf.norm(z, axis=1)
+    # z_l2_mean, z_l2_var = tf.nn.moments(z_l2)
+    # log_det_jacobians_mean, log_det_jacobians_var = tf.nn.moments(
+    #     log_probs)
+    # prior_log_likelihood_mean, prior_log_likelihood_var = tf.nn.moments(
+    #     prior_log_likelihood)
 
-    tf.summary.scalar("log_det_jacobians_mean",
-                      tf.reshape(log_det_jacobians_mean, []))
-    tf.summary.scalar("log_det_jacobians_var",
-                      tf.reshape(log_det_jacobians_var, []))
+    # tf.summary.scalar("log_det_jacobians_mean",
+    #                   tf.reshape(log_det_jacobians_mean, []))
+    # tf.summary.scalar("log_det_jacobians_var",
+    #                   tf.reshape(log_det_jacobians_var, []))
 
-    tf.summary.scalar("prior_log_likelihood_mean",
-                      tf.reshape(prior_log_likelihood_mean, []))
-    tf.summary.scalar("prior_log_likelihood_var",
-                      tf.reshape(prior_log_likelihood_var, []))
+    # tf.summary.scalar("prior_log_likelihood_mean",
+    #                   tf.reshape(prior_log_likelihood_mean, []))
+    # tf.summary.scalar("prior_log_likelihood_var",
+    #                   tf.reshape(prior_log_likelihood_var, []))
 
-    tf.summary.scalar("l2_z_mean", tf.reshape(z_l2_mean, []))
-    tf.summary.scalar("z_l2_var", tf.reshape(z_l2_var, []))
+    # tf.summary.scalar("l2_z_mean", tf.reshape(z_l2_mean, []))
+    # tf.summary.scalar("z_l2_var", tf.reshape(z_l2_var, []))
 
     # Generate samples for visualization.
     random_image = transformed_glow_flow.sample(16)

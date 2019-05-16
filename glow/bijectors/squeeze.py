@@ -7,7 +7,7 @@ from __future__ import print_function
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-from .transpose import Transpose
+# from .transpose import Transpose
 
 
 __all__ = [
@@ -86,3 +86,27 @@ class Squeeze(tfb.Bijector):
 
     def _inverse_log_det_jacobian(self, y, *args, **kwargs):
         return tf.constant(0.0, dtype=y.dtype)
+
+    def _forward_event_shape_tensor(self, input_shape_tensor):
+        return tf.stack((
+            input_shape_tensor[0]//self._factor,
+            input_shape_tensor[1]//self._factor,
+            input_shape_tensor[2]*self._factor**2))
+
+    def _forward_event_shape(self, input_shape):
+        return tf.TensorShape([
+            input_shape[0]//self._factor,
+            input_shape[1]//self._factor,
+            input_shape[2]*self._factor**2])
+
+    def _inverse_event_shape_tensor(self, input_shape_tensor):
+        return tf.stack((
+            input_shape_tensor[0]*self._factor,
+            input_shape_tensor[1]*self._factor,
+            input_shape_tensor[2]//self._factor**2))
+
+    def _inverse_event_shape(self, input_shape):
+        return tf.TensorShape([
+            input_shape[0]*self._factor,
+            input_shape[1]*self._factor,
+            input_shape[2]//self._factor**2])

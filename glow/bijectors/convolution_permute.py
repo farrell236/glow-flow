@@ -104,7 +104,7 @@ class ConvolutionPermute(tfb.Bijector):
         determinant = tf.matrix_determinant(tf.cast(self.w, tf.float64))
         log_det_jacobian = (
             H * W * tf.cast(tf.log(abs(determinant)), tf.float32))
-        return log_det_jacobian
+        return tf.squeeze(log_det_jacobian)
 
     def _maybe_assert_valid_x(self, x):
         """TODO"""

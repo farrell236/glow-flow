@@ -76,11 +76,10 @@ class GlowStep(tfb.Bijector):
             convolution_permute = ConvolutionPermute(
                 name=self._name + '/convolution_permute_{}'.format(i))
 
-            # We need to reshape because `tfb.RealNVP` only supports 1d input
-            # TODO(hartikainen): This should not require inverting
-            flatten = tfb.Invert(tfb.Reshape(
-                event_shape_out=(-1, np.prod(self._image_shape)),
-                event_shape_in=[-1] + list(self._image_shape)))
+            # # We need to reshape because `tfb.RealNVP` only supports 1d input
+            flatten = tfb.Reshape(
+                event_shape_in=self._image_shape.as_list(),
+                event_shape_out=[np.prod(self._image_shape.as_list())])
             affine_coupling = tfb.RealNVP(
                 num_masked=np.prod(self._image_shape)//2,
                 shift_and_log_scale_fn=glow_resnet_template(
@@ -88,10 +87,9 @@ class GlowStep(tfb.Bijector):
                     filters=(512, 512),
                     kernel_sizes=((3, 3), (3, 3)),
                     activation=tf.nn.relu))
-            # TODO(hartikainen): This should not require inverting
-            unflatten = tfb.Invert(tfb.Reshape(
-                event_shape_out=[-1] + list(self._image_shape),
-                event_shape_in=(-1, np.prod(self._image_shape))))
+            unflatten = tfb.Reshape(
+                event_shape_in=[np.prod(self._image_shape.as_list())],
+                event_shape_out=self._image_shape.as_list())
 
             flow_parts += [
                 activation_normalization,
@@ -103,8 +101,8 @@ class GlowStep(tfb.Bijector):
 
         # Note: tfb.Chain applies the list of bijectors in the _reverse_ order
         # of what they are inputted.
-        # self.flow = tfb.Chain(list(reversed(flow_parts)))
-        self.flow = tfb.Chain(flow_parts)
+        self.flow = tfb.Chain(list(reversed(flow_parts)))
+        # self.flow = tfb.Chain(flow_parts)
 
         self.built = True
 
@@ -124,13 +122,13 @@ class GlowStep(tfb.Bijector):
         if not self.built:
             self.build(x.get_shape())
 
-        return self.flow.forward_log_det_jacobian(x)
+        return self.flow.forward_log_det_jacobian(x, len(x.shape[-3:].as_list()))
 
     def _inverse_log_det_jacobian(self, y):
         if not self.built:
             self.build(y.get_shape())
 
-        return  self.flow.inverse_log_det_jacobian(y)
+        return self.flow.inverse_log_det_jacobian(y, len(y.shape[-3:].as_list()))
 
 
 class GlowFlow(tfb.Bijector):
@@ -198,7 +196,8 @@ class GlowFlow(tfb.Bijector):
                             tfb.Identity(),
                         ],
                         split_axis=-1,
-                        split_proportions=[1, 2**(i)-1]
+                        # split_proportions is not needed with 2 bijectors
+                        # split_proportions=[1, 2**(i)-1]
                     ),
                     Squeeze(factor=2**(i+1))
                 ])
@@ -233,7 +232,7 @@ class GlowFlow(tfb.Bijector):
         if not self.built:
             self.build(y.get_shape())
 
-        return  self.flow.inverse_log_det_jacobian(y)
+        return  self.flow.inverse_log_det_jacobian(y, 3)
 
     def _maybe_assert_valid_x(self, x):
         """TODO"""
